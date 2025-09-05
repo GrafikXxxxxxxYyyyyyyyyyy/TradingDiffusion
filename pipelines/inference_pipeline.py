@@ -120,7 +120,6 @@ class TradingGDTPipeline:
         timesteps, num_inference_steps = retrieve_timesteps(
             self.model.scheduler, num_inference_steps, self.model.device
         )
-        print(f"Timesteps: {timesteps}\nNum steps: {num_inference_steps}")
 
 
         # 4. Подготавливаем шумный вход для transformer
@@ -129,7 +128,7 @@ class TradingGDTPipeline:
 
 
         # 5. Denoising loop
-        for i, t in tqdm(enumerate(timesteps)):
+        for i, t in tqdm(enumerate(timesteps), total=num_inference_steps):
             noisy_input = self.model.scheduler.scale_model_input(noisy_input, t)
 
             # 5.1 Предсказываем шум моделью

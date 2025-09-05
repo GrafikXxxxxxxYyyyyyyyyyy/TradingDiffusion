@@ -28,9 +28,9 @@ class TradingGDTTrainingArgs:
     adam_weight_decay: float = 1e-2
     dataloader_num_workers: int = 0
     num_train_epochs: int = 1
+    save_steps: int = 1000
     # --- Добавлено для TensorBoard ---
-    tensorboard_log_dir: str = "runs/trading_gdt_experiment" # Директория для логов TensorBoard
-    logging_steps: int = 10 # Как часто логировать в TensorBoard (в шагах)
+    tensorboard_log_dir: str = "runs/trading_experiment" # Директория для логов TensorBoard
     # --- --- ---
 
 
@@ -170,18 +170,20 @@ class TradingGDTTrainer:
                 progress_bar.update(1)
 
                 # --- Добавлено для TensorBoard: Логирование метрик ---
-                if self.writer is not None and global_step % self.args.logging_steps == 0:
+                if self.writer is not None:
                     try:
                         self.writer.add_scalar("Loss/step", loss.detach().item(), global_step)
-                        self.writer.add_scalar("Learning_Rate", self.args.learning_rate, global_step)
-                        
-                        # Логируем градиенты (опционально, может замедлить обучение)
-                        # for name, param in self.model.transformer.named_parameters():
-                        #     if param.grad is not None:
-                        #         self.writer.add_histogram(f"Gradients/{name}", param.grad, global_step)
                     except Exception as log_e:
                         print(f"Ошибка при логировании в TensorBoard на шаге {global_step}: {log_e}")
                 # --- --- ---
+
+                # Сохраняем модель
+                if global_step > 0 and global_step % self.args.save_steps == 0:
+                    try:
+                        self.model.save_pretrained(dir_path=self.args.output_dir)
+                        print(f"Модель сохранена в {self.args.output_dir}")
+                    except Exception as e:
+                        print(f"Ошибка при сохранении модели: {e}")
 
             # Логируем среднюю потерю по эпохе
             avg_epoch_loss = epoch_loss / num_batches
@@ -194,14 +196,6 @@ class TradingGDTTrainer:
                 except Exception as log_e:
                     print(f"Ошибка при логировании средней потери эпохи в TensorBoard: {log_e}")
             # --- --- ---
-            
-            # Сохраняем модель после каждой эпохи
-            try:
-                epoch_output_dir = os.path.join(self.args.output_dir, f"epoch_{epoch+1}")
-                self.model.save_pretrained(dir_path=epoch_output_dir)
-                print(f"Модель сохранена в {epoch_output_dir}")
-            except Exception as e:
-                print(f"Ошибка при сохранении модели после эпохи {epoch+1}: {e}")
 
         # Закрываем прогресс-бар
         progress_bar.close()

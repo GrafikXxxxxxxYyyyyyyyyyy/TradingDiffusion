@@ -6,7 +6,8 @@ from diffusers import DDPMScheduler
 import json
 from typing import Union, Dict, Any
 from src import (
-    
+    TradingGDTTransformer,
+    TradingGDTFeatureExtractor
 )
 
 
@@ -43,7 +44,7 @@ class TradingGDTModel:
         self.scheduler = DDPMScheduler()
         
         # Инициализация feature extractor'а
-        self.extractor = TradingFeatureExtractor(
+        self.extractor = TradingGDTFeatureExtractor(
             input_size=5,
             feature_size=256,
         )
@@ -162,7 +163,7 @@ class TradingGDTModel:
         model.transformer.load_state_dict(transformer_state_dict)
         
         # Инициализация feature extractor'а
-        model.extractor = TradingFeatureExtractor(
+        model.extractor = TradingGDTFeatureExtractor(
             input_size=5,
             feature_size=256,
         )

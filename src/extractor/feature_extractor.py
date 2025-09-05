@@ -148,7 +148,7 @@ class ConvDecoder(nn.Module):
 
 
 
-class TradingFeatureExtractor(nn.Module):
+class TradingGDTFeatureExtractor(nn.Module):
     """
     Автоэнкодер для извлечения признаков из временных рядов OHLCV.
     """
@@ -158,7 +158,7 @@ class TradingFeatureExtractor(nn.Module):
             input_size (int): Размерность входных данных (5 для OHLCV).
             feature_size (int): Размерность извлекаемых признаков (256).
         """
-        super(TradingFeatureExtractor, self).__init__()
+        super(TradingGDTFeatureExtractor, self).__init__()
         self.input_size = input_size
         self.feature_size = feature_size
         
