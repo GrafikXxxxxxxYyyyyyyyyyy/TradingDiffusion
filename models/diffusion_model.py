@@ -1,24 +1,37 @@
+# models/gdt/model.py
 import torch
 import os
-from safetensors.torch import save_file, load_file
+from safetensors.torch import save_file, load_file, load_model
 from diffusers import DDPMScheduler
-from src.processor.price_processor_big import TradingGDTProcessor
-from src.transformer.mmdit import TradingGDTTransformer
+import json
+from typing import Union, Dict, Any
+from src import (
+    
+)
+
 
 
 class TradingGDTModel:
     def __init__(
         self, 
-        device: str = "mps"
+        device: str = "mps",
+        model_config: Dict[str, Any] = None
     ):
+        """
+        Инициализация модели TradingGDT.
+        
+        Args:
+            device (str): Устройство для вычислений ('cpu', 'cuda', 'mps').
+            model_config (Dict[str, Any], optional): Конфигурация модели.
+        """
         self.device = device
-
-        # Сохраняем параметры для последующего использования
-        self.model_config = {
+        
+        # Конфигурация модели по умолчанию
+        self.model_config = model_config or {
             "target_sequence_length": 32,
             "history_sequence_length": 256,
             "target_input_dim": 1,
-            "history_input_dim": 32,
+            "history_input_dim": 256,
             "hidden_size": 512,
             "num_layers": 12,
             "attention_head_dim": 64,
@@ -26,8 +39,25 @@ class TradingGDTModel:
             "timestep_embedding_dim": 256
         }
 
+        # Инициализация scheduler'а
         self.scheduler = DDPMScheduler()
-        self.processor = TradingGDTProcessor()
+        
+        # Инициализация feature extractor'а
+        self.extractor = TradingFeatureExtractor(
+            input_size=5,
+            feature_size=256,
+        )
+        # Попытка загрузить предобученный extractor
+        try:
+            load_model(self.extractor, 'pretrained-extractor/trading_feature_extractor.safetensors')
+            print("Feature extractor успешно загружен")
+        except Exception as e:
+            print(f"Предупреждение: Не удалось загрузить feature extractor: {e}")
+            
+        self.extractor.to(device)
+        self.extractor.eval()
+
+        # Инициализация трансформера
         self.transformer = TradingGDTTransformer(
             target_sequence_length=self.model_config["target_sequence_length"],
             history_sequence_length=self.model_config["history_sequence_length"],
@@ -42,59 +72,54 @@ class TradingGDTModel:
 
         # Подсчет общего количества параметров
         total_params = sum(p.numel() for p in self.transformer.parameters())
-        print(f"Общее количество параметров: {total_params / 1e6:.2f} millions")
-
-
-    def save_pretrained(self, dir_path):
-        """
-        Сохраняет модель и связанные компоненты в указанную директорию в формате safetensors
-        
-        Args:
-            dir_path (str): Путь к директории для сохранения модели
-        """
-        # Создаем директорию если её нет
-        os.makedirs(dir_path, exist_ok=True)
-        
-        # Сохраняем веса трансформера
-        transformer_state_dict = self.transformer.state_dict()
-        save_file(transformer_state_dict, os.path.join(dir_path, "transformer.safetensors"))
-        
-        # Сохраняем конфигурацию модели
-        config = {
-            "target_sequence_length": self.model_config["target_sequence_length"],
-            "history_sequence_length": self.model_config["history_sequence_length"],
-            "target_input_dim": self.model_config["target_input_dim"],
-            "history_input_dim": self.model_config["history_input_dim"],
-            "hidden_size": self.model_config["hidden_size"],
-            "num_layers": self.model_config["num_layers"],
-            "attention_head_dim": self.model_config["attention_head_dim"],
-            "num_attention_heads": self.model_config["num_attention_heads"],
-            "timestep_embedding_dim": self.model_config["timestep_embedding_dim"],
-            "device": str(self.device)
-        }
-        
-        config_path = os.path.join(dir_path, "config.json")
-        import json
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-        
-        print(f"Модель успешно сохранена в {dir_path}")
+        print(f"Общее количество параметров трансформера: {total_params / 1e6:.2f} millions")
 
 
     @classmethod
-    def from_pretrained(cls, dir_path, device=None):
+    def from_config(cls, config: Union[str, Dict[str, Any]], device: str = None):
         """
-        Загружает модель из указанной директории
+        Создает модель из конфигурационного файла или словаря.
         
         Args:
-            dir_path (str): Путь к директории с сохраненной моделью
-            device (str, optional): Устройство для загрузки модели
+            config (str or Dict): Путь к конфигурационному файлу или словарь с конфигурацией.
+            device (str, optional): Устройство для вычислений.
             
         Returns:
-            TradingGDTModel: Экземпляр загруженной модели
+            TradingGDTModel: Экземпляр модели.
         """
-        import json
+        if isinstance(config, str):
+            # Если передан путь к файлу
+            if not os.path.exists(config):
+                raise FileNotFoundError(f"Конфигурационный файл не найден: {config}")
+            
+            with open(config, 'r', encoding='utf-8') as f:
+                model_config = json.load(f)
+        elif isinstance(config, dict):
+            # Если передан словарь
+            model_config = config
+        else:
+            raise TypeError("config должен быть строкой (путь к файлу) или словарем")
         
+        # Определяем устройство
+        if device is None:
+            device = model_config.get("device", "cpu")
+        
+        # Создаем экземпляр модели
+        return cls(device=device, model_config=model_config)
+
+
+    @classmethod
+    def from_pretrained(cls, dir_path: str, device: str = None):
+        """
+        Загружает модель из указанной директории.
+        
+        Args:
+            dir_path (str): Путь к директории с сохраненной моделью.
+            device (str, optional): Устройство для загрузки модели.
+            
+        Returns:
+            TradingGDTModel: Экземпляр загруженной модели.
+        """
         # Загружаем конфигурацию
         config_path = os.path.join(dir_path, "config.json")
         if not os.path.exists(config_path):
@@ -114,7 +139,6 @@ class TradingGDTModel:
         
         # Создаем компоненты
         model.scheduler = DDPMScheduler()
-        model.processor = TradingGDTProcessor()
         
         # Создаем трансформер с параметрами из конфига
         model.transformer = TradingGDTTransformer(
@@ -137,6 +161,21 @@ class TradingGDTModel:
         transformer_state_dict = load_file(transformer_path)
         model.transformer.load_state_dict(transformer_state_dict)
         
+        # Инициализация feature extractor'а
+        model.extractor = TradingFeatureExtractor(
+            input_size=5,
+            feature_size=256,
+        )
+        # Попытка загрузить предобученный extractor
+        try:
+            load_model(model.extractor, 'pretrained-extractor/trading_feature_extractor.safetensors')
+            print("Feature extractor успешно загружен")
+        except Exception as e:
+            print(f"Предупреждение: Не удалось загрузить feature extractor: {e}")
+            
+        model.extractor.to(device)
+        model.extractor.eval()
+        
         # Переводим модель в режим оценки
         model.transformer.eval()
         
@@ -144,28 +183,56 @@ class TradingGDTModel:
         return model
 
 
-    def to(self, device):
+    def save_pretrained(self, dir_path: str):
         """
-        Перемещает модель на указанное устройство
+        Сохраняет модель и связанные компоненты в указанную директорию в формате safetensors.
         
         Args:
-            device (str or torch.device): Целевое устройство
+            dir_path (str): Путь к директории для сохранения модели.
+        """
+        # Создаем директорию если её нет
+        os.makedirs(dir_path, exist_ok=True)
+        
+        # Сохраняем веса трансформера
+        transformer_state_dict = self.transformer.state_dict()
+        save_file(transformer_state_dict, os.path.join(dir_path, "transformer.safetensors"))
+        
+        # Сохраняем конфигурацию модели
+        config = self.model_config.copy()
+        config["device"] = str(self.device)
+        
+        config_path = os.path.join(dir_path, "config.json")
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        
+        print(f"Модель успешно сохранена в {dir_path}")
+
+
+    def to(self, device: Union[str, torch.device]):
+        """
+        Перемещает модель на указанное устройство.
+        
+        Args:
+            device (str or torch.device): Целевое устройство.
             
         Returns:
             TradingGDTModel: self
         """
-        self.device = device
+        self.device = str(device)
         self.transformer = self.transformer.to(device)
+        self.extractor = self.extractor.to(device)
         return self
 
-
     def train(self):
-        """Переводит модель в режим обучения"""
+        """Переводит модель в режим обучения."""
         self.transformer.train()
         return self
 
-
     def eval(self):
-        """Переводит модель в режим оценки"""
+        """Переводит модель в режим оценки."""
         self.transformer.eval()
         return self
+
+    def parameters(self):
+        """Возвращает параметры модели для оптимизатора."""
+        return self.transformer.parameters()

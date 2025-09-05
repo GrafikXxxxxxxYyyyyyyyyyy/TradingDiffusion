@@ -160,3 +160,5 @@ cython_debug/
 #.idea/
 
 data/
+.TradingGDT_env/
+.DS_store

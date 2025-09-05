@@ -104,14 +104,14 @@ class TradingGDTPipeline:
             # ...
             pass
         elif ticker is None and history_prices is not None:
-            history_prices = history_prices
+            history_prices = history_prices.to(model.device)
         else:
             raise ("Должны быть переданы либо ticker либо исторические цены")
         print(f"History prices shape: {history_prices.shape}")
 
 
         # 2. Процессим исторические цены
-        processed_prices = self.model.processor(history_prices)
+        processed_prices = self.model.extractor.extract_features(history_prices)
         processed_prices = processed_prices.to(self.model.device)
         print(f"Processed prices shape: {processed_prices.shape}")
 
@@ -142,8 +142,5 @@ class TradingGDTPipeline:
 
             # 5.2 рассчитываем предыдущий шумный семпл x_t -> x_t-1
             noisy_input = self.model.scheduler.step(noise_pred, t, noisy_input, return_dict=False)[0]
-
-
-        plot_history_and_prediction(history_prices, noisy_input)
 
         return noisy_input
