@@ -161,8 +161,8 @@ cython_debug/
 
 data/
 TradingGDT-pretrained/
-runs/
+/runs/
 
 
 .TradingGDT_env/
-.DS_store
+.DS_Store
