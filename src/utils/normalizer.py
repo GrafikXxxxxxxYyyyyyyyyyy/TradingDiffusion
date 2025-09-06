@@ -10,12 +10,12 @@ class TradingNormalizer:
     def __init__(self, method='log_returns', history_len=256):
         """
         Args:
-            method (str): Метод нормализации. Поддерживаемые значения: 'log_returns'.
+            method (str): Метод нормализации. Поддерживаемые значения: 'log_returns', 'z-score'.
             history_len (int): Длина исторических данных в чанке.
         """
         self.method = method
         self.history_len = history_len
-        if self.method not in ['log_returns']:
+        if self.method not in ['log_returns', 'z-score']:
             raise ValueError(f"Unsupported normalization method: {self.method}")
 
 
@@ -33,6 +33,8 @@ class TradingNormalizer:
         """
         if self.method == 'log_returns':
             return self._log_returns_normalize(chunk)
+        elif self.method == 'z-score':
+            return self._z_score_normalize(chunk)
         else:
             # По умолчанию возвращаем исходный чанк без нормализации
             return chunk, {}
@@ -115,4 +117,49 @@ class TradingNormalizer:
         stats['volume_mean'] = volume_mean
         stats['volume_std'] = volume_std
         
+        return normalized_chunk, stats
+    
+
+    def _z_score_normalize(self, chunk):
+        """
+        Нормализует данные с использованием z-score для всех признаков.
+        Статистики (среднее и стандартное отклонение) вычисляются по историческим данным.
+        
+        Args:
+            chunk (np.ndarray): Входной чанк данных формы [T, 5] (OHLCV).
+            
+        Returns:
+            tuple: (normalized_chunk, stats)
+                normalized_chunk (np.ndarray): Нормализованный чанк формы [T, 5].
+                stats (dict): Статистики для денормализации.
+        """
+        if chunk.shape[1] != 5:
+            raise ValueError(f"Expected chunk with 5 columns (OHLCV), got {chunk.shape[1]}")
+            
+        T = chunk.shape[0]
+        if T < self.history_len:
+             raise ValueError(f"Chunk length {T} is less than history_len {self.history_len}")
+            
+        normalized_chunk = np.zeros_like(chunk, dtype=np.float32)
+        stats = {}
+        
+        # Нормализация всех признаков (OHLCV) по истории
+        for i in range(5):  # Все 5 колонок
+            # Вычисляем статистики по истории (первые history_len точек)
+            history_data = chunk[:self.history_len, i]
+            mean_history = np.mean(history_data)
+            std_history = np.std(history_data)
+            
+            # Избегаем деления на ноль
+            if std_history < 1e-8:
+                std_history = 1.0
+                
+            # Нормализуем все данные (историю и таргет) по статистикам истории
+            normalized_data = (chunk[:, i] - mean_history) / std_history
+            normalized_chunk[:, i] = normalized_data
+            
+            # Сохраняем статистики для денормализации
+            stats[f'mean_{i}'] = mean_history
+            stats[f'std_{i}'] = std_history
+            
         return normalized_chunk, stats

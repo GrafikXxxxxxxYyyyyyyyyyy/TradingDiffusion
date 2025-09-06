@@ -163,6 +163,7 @@ data/
 TradingGDT-pretrained/
 /runs/
 pretrained-models/
+pretrained-extractor/
 
 
 .TradingGDT_env/
