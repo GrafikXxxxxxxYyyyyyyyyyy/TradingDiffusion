@@ -1,0 +1,13 @@
+{
+  "model_type": "CustomDiffusionModel",
+  "target_seq_len": 32,
+  "target_input_dim": 1,
+  "condition_seq_len": 256,
+  "condition_input_dim": 256,
+  "hidden_size": 512,
+  "num_layers": 6,
+  "num_heads": 8,
+  "time_embedding_dim": 256,
+  "dropout": 0.1,
+  "device": "mps"
+}

@@ -5,7 +5,7 @@
   "target_input_dim": 1,
   "history_input_dim": 256,
   "hidden_size": 512,
-  "num_layers": 12,
+  "num_layers": 6,
   "attention_head_dim": 64,
   "num_attention_heads": 8,
   "timestep_embedding_dim": 256,
