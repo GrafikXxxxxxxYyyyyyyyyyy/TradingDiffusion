@@ -162,6 +162,7 @@ cython_debug/
 data/
 TradingGDT-pretrained/
 /runs/
+pretrained-models/
 
 
 .TradingGDT_env/

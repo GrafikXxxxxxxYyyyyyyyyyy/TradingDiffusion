@@ -1,45 +1,37 @@
-# models/gdt/model.py
 import torch
 import os
-from safetensors.torch import save_file, load_file, load_model
+from safetensors.torch import save_file, load_file, load_model, save_model
 from diffusers import DDPMScheduler
 import json
 from typing import Union, Dict, Any
 from src import (
     TradingGDTTransformer,
+    UNetStockModel,
+    CustomDiffusionModel, 
     TradingGDTFeatureExtractor
 )
 
+
+MODEL_REGISTRY = {
+    "TradingGDTTransformer": TradingGDTTransformer,
+    "UNetStockModel": UNetStockModel,
+    "CustomDiffusionModel": CustomDiffusionModel, 
+}
 
 
 class TradingGDTModel:
     def __init__(
         self, 
         device: str = "mps",
-        model_config: Dict[str, Any] = None
     ):
         """
         Инициализация модели TradingGDT.
         
         Args:
             device (str): Устройство для вычислений ('cpu', 'cuda', 'mps').
-            model_config (Dict[str, Any], optional): Конфигурация модели.
         """
         self.device = device
         
-        # Конфигурация модели по умолчанию
-        self.model_config = model_config or {
-            "target_sequence_length": 32,
-            "history_sequence_length": 256,
-            "target_input_dim": 1,
-            "history_input_dim": 256,
-            "hidden_size": 512,
-            "num_layers": 12,
-            "attention_head_dim": 64,
-            "num_attention_heads": 8,
-            "timestep_embedding_dim": 256
-        }
-
         # Инициализация scheduler'а
         self.scheduler = DDPMScheduler()
         
@@ -48,7 +40,6 @@ class TradingGDTModel:
             input_size=5,
             feature_size=256,
         )
-        # Попытка загрузить предобученный extractor
         try:
             load_model(self.extractor, 'pretrained-extractor/trading_feature_extractor.safetensors')
             print("Feature extractor успешно загружен")
@@ -58,22 +49,10 @@ class TradingGDTModel:
         self.extractor.to(device)
         self.extractor.eval()
 
-        # Инициализация трансформера
-        self.transformer = TradingGDTTransformer(
-            target_sequence_length=self.model_config["target_sequence_length"],
-            history_sequence_length=self.model_config["history_sequence_length"],
-            target_input_dim=self.model_config["target_input_dim"],
-            history_input_dim=self.model_config["history_input_dim"],
-            num_layers=self.model_config["num_layers"],
-            attention_head_dim=self.model_config["attention_head_dim"],
-            num_attention_heads=self.model_config["num_attention_heads"],
-            hidden_size=self.model_config["hidden_size"],
-            timestep_embedding_dim=self.model_config["timestep_embedding_dim"]
-        ).to(device)
-
-        # Подсчет общего количества параметров
-        total_params = sum(p.numel() for p in self.transformer.parameters())
-        print(f"Общее количество параметров трансформера: {total_params / 1e6:.2f} millions")
+        # Конфигурация модели по умолчанию
+        self.model_config = None
+        # Инициализация модели по умолчанию
+        self.backbone = None
 
 
     @classmethod
@@ -88,125 +67,196 @@ class TradingGDTModel:
         Returns:
             TradingGDTModel: Экземпляр модели.
         """
+        if device is None:
+            device = cls._determine_device()
+
+        # Загрузка конфигурации
         if isinstance(config, str):
-            # Если передан путь к файлу
             if not os.path.exists(config):
                 raise FileNotFoundError(f"Конфигурационный файл не найден: {config}")
-            
             with open(config, 'r', encoding='utf-8') as f:
-                model_config = json.load(f)
+                config_dict = json.load(f)
         elif isinstance(config, dict):
-            # Если передан словарь
-            model_config = config
+            config_dict = config
         else:
             raise TypeError("config должен быть строкой (путь к файлу) или словарем")
+
+        model_type = config_dict.get("model_type")
+        if model_type is None:
+            raise ValueError("Конфигурация должна содержать ключ 'model_type'")
         
-        # Определяем устройство
-        if device is None:
-            device = model_config.get("device", "cpu")
+        if model_type not in MODEL_REGISTRY:
+            raise ValueError(f"Неизвестный тип модели: {model_type}. Доступные типы: {list(MODEL_REGISTRY.keys())}")
         
-        # Создаем экземпляр модели
-        return cls(device=device, model_config=model_config)
+        model_class = MODEL_REGISTRY[model_type]
+
+        # Создание экземпляра класса
+        model_instance = cls(device=device)
+        model_instance.model_config = config_dict.copy()
+        
+        # Фильтрация конфигурации для создания модели (исключение служебных полей)
+        model_config_filtered = {k: v for k, v in config_dict.items() if k not in ["model_type", "device"]}
+        
+        # Создание модели
+        try:
+            model_instance.backbone = model_class(**model_config_filtered).to(device)
+        except Exception as e:
+            raise RuntimeError(f"Ошибка при создании модели {model_type}: {e}") from e
+            
+        return model_instance
+    
+
+    def save_pretrained(self, dir_path: str = "pretrained-models"):
+        """
+        Сохраняет модель и связанные компоненты в указанную базовую директорию.
+        Создаёт поддиректорию с именем типа модели.
+        Структура: {base_dir_path}/{model_type}/config.json и {model_type}.safetensors
+
+        Args:
+            base_dir_path (str): Базовый путь к директории для сохранения всех моделей.
+                                 По умолчанию "pretrained-models".
+        """
+        if self.backbone is None:
+            raise ValueError("Нет модели для сохранения. Инициализируйте модель сначала.")
+        if self.model_config is None or "model_type" not in self.model_config:
+            raise ValueError("Конфигурация модели не найдена или не содержит 'model_type'.")
+
+        model_type = self.model_config["model_type"]
+        # Создаем поддиректорию для конкретной модели
+        model_dir_path = os.path.join(dir_path, model_type)
+        os.makedirs(model_dir_path, exist_ok=True)
+
+        # Сохранение конфигурации
+        config_path = os.path.join(model_dir_path, "config.json")
+        config_to_save = self.model_config.copy()
+        config_to_save["device"] = str(self.device)
+        try:
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config_to_save, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            raise RuntimeError(f"Ошибка при сохранении config.json в {config_path}: {e}") from e
+
+        # Сохранение весов модели
+        model_weights_path = os.path.join(model_dir_path, f"{model_type}.safetensors")
+        try:
+            save_file(self.backbone.state_dict(), model_weights_path)
+        except Exception as e:
+            raise RuntimeError(f"Ошибка при сохранении весов модели в {model_weights_path}: {e}") from e
+
+        print(f"Модель {model_type} успешно сохранена в {model_dir_path}")
 
 
     @classmethod
     def from_pretrained(cls, dir_path: str, device: str = None):
         """
-        Загружает модель из указанной директории.
-        
+        Загружает модель из указанной базовой директории.
+        Предполагается структура: {base_dir_path}/{model_type}/config.json и {model_type}.safetensors
+
         Args:
-            dir_path (str): Путь к директории с сохраненной моделью.
+            base_dir_path (str): Путь к базовой директории, содержащей поддиректории моделей.
             device (str, optional): Устройство для загрузки модели.
-            
+
         Returns:
             TradingGDTModel: Экземпляр загруженной модели.
         """
-        # Загружаем конфигурацию
-        config_path = os.path.join(dir_path, "config.json")
-        if not os.path.exists(config_path):
-            raise FileNotFoundError(f"Файл конфигурации не найден: {config_path}")
-            
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-        
-        # Определяем устройство
         if device is None:
-            device = config.get("device", "cpu")
-        
-        # Создаем экземпляр модели
-        model = cls.__new__(cls)  # Создаем экземпляр без вызова __init__
-        model.device = device
-        model.model_config = config
-        
-        # Создаем компоненты
-        model.scheduler = DDPMScheduler()
-        
-        # Создаем трансформер с параметрами из конфига
-        model.transformer = TradingGDTTransformer(
-            target_sequence_length=config["target_sequence_length"],
-            history_sequence_length=config["history_sequence_length"],
-            target_input_dim=config["target_input_dim"],
-            history_input_dim=config["history_input_dim"],
-            num_layers=config["num_layers"],
-            attention_head_dim=config["attention_head_dim"],
-            num_attention_heads=config["num_attention_heads"],
-            hidden_size=config["hidden_size"],
-            timestep_embedding_dim=config["timestep_embedding_dim"]
-        ).to(device)
-        
-        # Загружаем веса трансформера
-        transformer_path = os.path.join(dir_path, "transformer.safetensors")
-        if not os.path.exists(transformer_path):
-            raise FileNotFoundError(f"Файл весов не найден: {transformer_path}")
-            
-        transformer_state_dict = load_file(transformer_path)
-        model.transformer.load_state_dict(transformer_state_dict)
-        
-        # Инициализация feature extractor'а
-        model.extractor = TradingGDTFeatureExtractor(
-            input_size=5,
-            feature_size=256,
-        )
-        # Попытка загрузить предобученный extractor
+            device = cls._determine_device()
+
+        if not os.path.exists(dir_path):
+            raise FileNotFoundError(f"Базовая директория моделей не найдена: {dir_path}")
+
+        # Предполагаем, что base_dir_path содержит поддиректорию с именем типа модели
+        # Нам нужно найти эту поддиректорию. Мы можем попробовать загрузить config.json
+        # из base_dir_path напрямую, если это старый формат, или искать поддиректорию.
+        # Простой способ: если base_dir_path содержит config.json, используем его как есть.
+        # Иначе предполагаем, что это базовая директория и ищем поддиректорию.
+
+        config_path_direct = os.path.join(dir_path, "config.json")
+        model_dir_path = dir_path # По умолчанию, если config.json прямо тут
+
+        if not os.path.exists(config_path_direct):
+            # Предполагаем, что base_dir_path - это базовая директория
+            # Пытаемся найти поддиректорию с config.json
+            try:
+                # Пробуем загрузить config, чтобы узнать model_type
+                # Это немного неуклюже, но работает
+                temp_config_path = None
+                # Ищем любую поддиректорию с config.json
+                for item in os.listdir(dir_path):
+                    item_path = os.path.join(dir_path, item)
+                    if os.path.isdir(item_path):
+                        possible_config = os.path.join(item_path, "config.json")
+                        if os.path.exists(possible_config):
+                            temp_config_path = possible_config
+                            model_dir_path = item_path
+                            break
+
+                if temp_config_path is None:
+                     # Пробуем интерпретировать base_dir_path как путь к модели напрямую
+                     # (для обратной совместимости)
+                     model_dir_path = dir_path
+                     # Проверка будет ниже
+                     pass
+                # Если нашли, model_dir_path уже установлен
+            except (OSError, StopIteration):
+                # Если не можем прочитать директорию или не находим поддиректорию
+                # Пробуем интерпретировать base_dir_path как путь к модели напрямую
+                model_dir_path = dir_path
+                # Проверка будет ниже
+
+        config_path = os.path.join(model_dir_path, "config.json")
+
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Файл конфигурации не найден в {model_dir_path} (ожидался {config_path})")
+
         try:
-            load_model(model.extractor, 'pretrained-extractor/trading_feature_extractor.safetensors')
-            print("Feature extractor успешно загружен")
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_dict = json.load(f)
         except Exception as e:
-            print(f"Предупреждение: Не удалось загрузить feature extractor: {e}")
-            
-        model.extractor.to(device)
-        model.extractor.eval()
-        
-        # Переводим модель в режим оценки
-        model.transformer.eval()
-        
-        print(f"Модель успешно загружена из {dir_path}")
-        return model
+            raise RuntimeError(f"Ошибка при загрузке config.json из {config_path}: {e}") from e
 
+        model_type = config_dict.get("model_type")
+        if model_type is None:
+            raise ValueError("Конфигурация должна содержать ключ 'model_type'")
 
-    def save_pretrained(self, dir_path: str):
-        """
-        Сохраняет модель и связанные компоненты в указанную директорию в формате safetensors.
-        
-        Args:
-            dir_path (str): Путь к директории для сохранения модели.
-        """
-        # Создаем директорию если её нет
-        os.makedirs(dir_path, exist_ok=True)
-        
-        # Сохраняем веса трансформера
-        transformer_state_dict = self.transformer.state_dict()
-        save_file(transformer_state_dict, os.path.join(dir_path, "transformer.safetensors"))
-        
-        # Сохраняем конфигурацию модели
-        config = self.model_config.copy()
-        config["device"] = str(self.device)
-        
-        config_path = os.path.join(dir_path, "config.json")
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-        
-        print(f"Модель успешно сохранена в {dir_path}")
+        if model_type not in MODEL_REGISTRY:
+            raise ValueError(f"Неизвестный тип модели: {model_type}. Доступные типы: {list(MODEL_REGISTRY.keys())}")
+
+        model_class = MODEL_REGISTRY[model_type]
+
+        # Создание экземпляра класса
+        model_instance = cls(device=device)
+        model_instance.model_config = config_dict.copy()
+
+        # Создание модели
+        model_config_filtered = {k: v for k, v in config_dict.items() if k not in ["model_type", "device"]}
+        try:
+            model_instance.backbone = model_class(**model_config_filtered).to(device)
+        except Exception as e:
+            raise RuntimeError(f"Ошибка при создании модели {model_type}: {e}") from e
+
+        # Загрузка весов модели
+        model_weights_path = os.path.join(model_dir_path, f"{model_type}.safetensors")
+        # Альтернативный путь для совместимости
+        model_weights_path_alt = os.path.join(model_dir_path, "backbone.safetensors")
+        weights_path_to_use = model_weights_path
+        if not os.path.exists(model_weights_path):
+            if os.path.exists(model_weights_path_alt):
+                weights_path_to_use = model_weights_path_alt
+            else:
+                 raise FileNotFoundError(
+                    f"Файл весов модели не найден: ожидался {model_weights_path} или {model_weights_path_alt}"
+                )
+
+        try:
+            state_dict = load_file(weights_path_to_use)
+            model_instance.backbone.load_state_dict(state_dict)
+            model_instance.backbone.eval()
+        except Exception as e:
+            raise RuntimeError(f"Ошибка при загрузке весов модели из {weights_path_to_use}: {e}") from e
+
+        print(f"Модель {model_type} успешно загружена из {model_dir_path}")
+        return model_instance
 
 
     def to(self, device: Union[str, torch.device]):
@@ -220,20 +270,40 @@ class TradingGDTModel:
             TradingGDTModel: self
         """
         self.device = str(device)
-        self.transformer = self.transformer.to(device)
+        if self.backbone is not None:
+            self.backbone = self.backbone.to(device)
         self.extractor = self.extractor.to(device)
         return self
 
+
     def train(self):
         """Переводит модель в режим обучения."""
-        self.transformer.train()
+        if self.backbone is not None:
+            self.backbone.train()
         return self
+
 
     def eval(self):
         """Переводит модель в режим оценки."""
-        self.transformer.eval()
+        if self.backbone is not None:
+            self.backbone.eval()
         return self
+
 
     def parameters(self):
         """Возвращает параметры модели для оптимизатора."""
-        return self.transformer.parameters()
+        if self.backbone is not None:
+            return self.backbone.parameters()
+        else:
+            raise ValueError("Модель не инициализирована. Вызовите from_config или from_pretrained.")
+
+
+    @staticmethod
+    def _determine_device() -> str:
+        """Определяет доступное устройство для вычислений."""
+        if torch.cuda.is_available():
+            return "cuda"
+        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            return "mps"
+        else:
+            return "cpu"

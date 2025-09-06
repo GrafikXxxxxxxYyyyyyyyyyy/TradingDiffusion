@@ -9,48 +9,6 @@ import matplotlib.pyplot as plt
 
 
 
-def plot_history_and_prediction(history, predict):
-    """
-    Отрисовывает исторические цены и прогноз на одном графике
-    
-    Args:
-        history: torch.Tensor размерности [1, 256, 1] - исторические данные
-        predict: torch.Tensor размерности [1, 32, 1] - прогнозируемые данные
-    """
-    # Преобразуем тензоры в numpy массивы и убираем лишние размерности
-    history_np = history.squeeze().detach().cpu().numpy()
-    predict_np = predict.squeeze().detach().cpu().numpy()
-    
-    # Создаем массивы для оси x
-    history_x = np.arange(len(history_np))
-    predict_x = np.arange(len(history_np), len(history_np) + len(predict_np))
-    
-    # Создаем график
-    plt.figure(figsize=(12, 6))
-    
-    # Рисуем исторические данные
-    plt.plot(history_x, history_np, label='История', color='blue', linewidth=1)
-    
-    # Рисуем прогноз
-    plt.plot(predict_x, predict_np, label='Прогноз', color='red', linewidth=1)
-    
-    # Соединяем последнюю точку истории с первой точкой прогноза
-    plt.plot([history_x[-1], predict_x[0]], [history_np[-1], predict_np[0]], 
-             color='red', linewidth=1, linestyle='--', alpha=0.7)
-    
-    # Настройки графика
-    plt.xlabel('Время')
-    plt.ylabel('Цена закрытия')
-    plt.title('Исторические цены и прогноз')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    
-    # Показываем график
-    plt.tight_layout()
-    plt.show()
-
-
-
 # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.retrieve_timesteps
 def retrieve_timesteps(
     scheduler,
@@ -133,7 +91,7 @@ class TradingGDTPipeline:
 
             # 5.1 Предсказываем шум моделью
             with torch.no_grad():
-                noise_pred = self.model.transformer(
+                noise_pred = self.model.backbone(
                     noisy_targets=noisy_input,
                     timestep=t,
                     processor_hidden_states=processed_prices,

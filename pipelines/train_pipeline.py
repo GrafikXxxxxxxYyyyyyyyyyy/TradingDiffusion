@@ -68,11 +68,11 @@ class TradingGDTTrainer:
             os.makedirs(self.args.output_dir, exist_ok=True)
 
         # 2. Включаем обучение параметров трансформера
-        self.model.transformer.train()
+        self.model.train()
 
         # 3. Initialize the optimizer
         optimizer = torch.optim.AdamW(
-            self.model.transformer.parameters(),
+            self.model.parameters(),
             lr=self.args.learning_rate,
             betas=(self.args.adam_beta1, self.args.adam_beta2),
             weight_decay=self.args.adam_weight_decay,
@@ -144,7 +144,7 @@ class TradingGDTTrainer:
                     processor_hidden_states = processor_hidden_states.to(self.model.device)
 
                 # Predict the noise residual and compute loss
-                model_pred = self.model.transformer(
+                model_pred = self.model.backbone(
                     noisy_targets=noisy_input,
                     timestep=timesteps,
                     processor_hidden_states=processor_hidden_states,

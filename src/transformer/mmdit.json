@@ -1,5 +1,5 @@
 {
-  "model_type": "TradingGDTModel",
+  "model_type": "TradingGDTTransformer",
   "target_sequence_length": 32,
   "history_sequence_length": 256,
   "target_input_dim": 1,

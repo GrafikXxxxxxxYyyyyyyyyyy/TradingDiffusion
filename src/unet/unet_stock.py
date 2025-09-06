@@ -159,7 +159,7 @@ class UNetStockModel(nn.Module):
         t_emb = self.time_embed(t_emb)
 
         # Input half of the U-Net
-        x = noisy_targets
+        x = noisy_targets.transpose(1,2)
         for module in self.input_blocks:
             x = module(x, t_emb, processor_hidden_states)
             x_input_block.append(x)
@@ -176,7 +176,7 @@ class UNetStockModel(nn.Module):
             x = module(x, t_emb, processor_hidden_states)
 
         # Final normalization and 3x1 convolution
-        return self.out(x)
+        return self.out(x).transpose(1,2)
 
 
 class TimestepEmbedSequential(nn.Sequential):
