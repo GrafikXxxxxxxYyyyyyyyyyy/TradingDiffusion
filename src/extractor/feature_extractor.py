@@ -166,12 +166,12 @@ class TradingGDTFeatureExtractor(nn.Module):
         self.encoder = ConvEncoder(
             input_channels=input_size, 
             output_channels=feature_size,
-            hidden_dims=[32, 64, 128, 128] 
+            hidden_dims=[32, 64, 128, 128, 256] 
         )
         self.decoder = ConvDecoder(
             input_channels=feature_size, 
             output_channels=input_size,
-            hidden_dims=[128, 128, 64, 32] 
+            hidden_dims=[256, 128, 128, 64, 32] 
         )
 
 
